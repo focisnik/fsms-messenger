@@ -64,16 +64,15 @@
 
 <script>
   // ВСТАВЬ СВОИ ДАННЫЕ ИЗ SUPABASE СЮДА:
-
   const SUPABASE_URL = 'https://gphgkqrjdxvepwjmoduy.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_PmhuQLPWi0EJyafazMbR3Q_WxiZk3oC';
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   let currentUser = null;
   let activeChatUser = null;
 
   // Проверка сессии при загрузке
-  supabase.auth.getSession().then(({ data: { session } }) => {
+  sbClient.auth.getSession().then(({ data: { session } }) => {
     if (session) initApp(session.user);
   });
 
@@ -87,7 +86,7 @@
     if (!email || !password) return alert('Введите email и пароль!');
 
     // Проверяем, свободен ли никнейм
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing, error: checkError } = await sbClient
       .from('profiles')
       .select('username')
       .eq('username', username)
@@ -99,7 +98,7 @@
     }
     if (existing) return alert('Этот никнейм уже занят!');
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await sbClient.auth.signUp({ email, password });
     if (error) {
       console.error(error);
       return alert('Ошибка регистрации: ' + error.message);
@@ -110,7 +109,7 @@
     }
 
     // Создаем запись в таблице profiles
-    const { error: profileError } = await supabase
+    const { error: profileError } = await sbClient
       .from('profiles')
       .insert([{ id: data.user.id, username: username, bio: 'Привет! Я тут новенький.' }]);
 
@@ -132,7 +131,7 @@
     const password = document.getElementById('auth-password').value;
     if (!email || !password) return alert('Введите email и пароль!');
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
     if (error) {
       console.error(error);
       return alert('Ошибка входа: ' + error.message);
@@ -142,7 +141,7 @@
 
   // Выход
   async function signOut() {
-    await supabase.auth.signOut();
+    await sbClient.auth.signOut();
     location.reload();
   }
 
@@ -153,7 +152,7 @@
     document.getElementById('app-screen').classList.remove('hidden');
 
     // Загружаем свой профиль
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+    const { data: profile } = await sbClient.from('profiles').select('*').eq('id', user.id).single();
     if (profile) {
       document.getElementById('my-username').innerText = '@' + profile.username;
       document.getElementById('my-bio').innerText = profile.bio || '';
@@ -162,7 +161,7 @@
     }
 
     // Подписываемся на новые сообщения в реальном времени
-    supabase.channel('messages')
+    sbClient.channel('messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
         const msg = payload.new;
         if (activeChatUser && (
@@ -182,14 +181,14 @@
 
     if (file) {
       const filePath = `${currentUser.id}-${Date.now()}`;
-      const { error: uploadError } = await supabase.storage.from('avatars').upload(filePath, file);
+      const { error: uploadError } = await sbClient.storage.from('avatars').upload(filePath, file);
       if (uploadError) return alert('Ошибка загрузки фото: ' + uploadError.message);
 
-      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+      const { data } = sbClient.storage.from('avatars').getPublicUrl(filePath);
       avatar_url = data.publicUrl;
     }
 
-    await supabase.from('profiles').update({ bio, avatar_url }).eq('id', currentUser.id);
+    await sbClient.from('profiles').update({ bio, avatar_url }).eq('id', currentUser.id);
     document.getElementById('my-bio').innerText = bio;
     document.getElementById('my-avatar').src = avatar_url;
     alert('Профиль обновлен!');
@@ -202,7 +201,7 @@
     list.innerHTML = '';
     if (!query) return;
 
-    const { data: users } = await supabase
+    const { data: users } = await sbClient
       .from('profiles')
       .select('*')
       .ilike('username', `%${query}%`)
@@ -236,7 +235,7 @@
     messagesDiv.innerHTML = '';
 
     // Загружаем историю переписки
-    const { data: messages } = await supabase
+    const { data: messages } = await sbClient
       .from('messages')
       .select('*')
       .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${user.id}),and(sender_id.eq.${user.id},receiver_id.eq.${currentUser.id})`)
@@ -263,13 +262,12 @@
     if (!content || !activeChatUser) return;
 
     input.value = '';
-    await supabase.from('messages').insert([{
+    await sbClient.from('messages').insert([{
       sender_id: currentUser.id,
       receiver_id: activeChatUser.id,
       content: content
     }]);
   }
 </script>
-
 </body>
 </html>
