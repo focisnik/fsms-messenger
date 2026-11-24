@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fsms</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top-brand">
+  <h1>Fsms</h1>
+</header>
+
+<div class="container">
+  <!-- ЭКРАН АВТОРИЗАЦИИ -->
+  <div id="auth-screen">
+    <h2>Вход / Регистрация</h2>
+    <input type="text" id="auth-username" placeholder="Уникальный никнейм (для регистрации)">
+    <input type="email" id="auth-email" placeholder="Email">
+    <input type="password" id="auth-password" placeholder="Пароль (минимум 6 символов)">
+    <button onclick="signUp()">Создать аккаунт</button>
+    <button onclick="signIn()" style="background: #241911;">Войти</button>
+  </div>
+
+  <!-- ГЛАВНЫЙ ЭКРАН МЕССЕНДЖЕРА -->
+  <div id="app-screen" class="hidden">
+    <!-- Левая панель: Профиль и Поиск -->
+    <div class="sidebar">
+      <div class="profile-box">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img id="my-avatar" class="avatar" src="https://via.placeholder.com/52" alt="Аватар">
+          <div style="min-width: 0;">
+            <strong id="my-username">@username</strong>
+            <div style="font-size: 17px; color: #4a3525; word-wrap: break-word;" id="my-bio">Нет описания</div>
+          </div>
+        </div>
+        <details style="margin-top: 10px; font-size: 18px;">
+          <summary style="cursor: pointer; color: #120e0b;">Редактировать профиль</summary>
+          <input type="file" id="avatar-input" accept="image/*">
+          <textarea id="bio-input" placeholder="Расскажите о себе..."></textarea>
+          <button onclick="updateProfile()">Сохранить</button>
+        </details>
+      </div>
+
+      <!-- Поиск пользователей -->
+      <input type="text" id="search-input" placeholder="Поиск по никнейму..." onkeyup="searchUsers()">
+      <div id="users-list"></div>
+      <button onclick="signOut()" style="background: #120e0b; margin-top: auto;">Выйти</button>
+    </div>
+
+    <!-- Правая панель: Чат -->
+    <div class="chat-area">
+      <div id="chat-header">Выберите пользователя слева, чтобы начать чат</div>
+      <div id="messages"></div>
+      <form id="msg-form" class="hidden" onsubmit="sendMessage(event)">
+        <input type="text" id="msg-input" placeholder="Напишите сообщение..." autocomplete="off">
+        <button type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ВСТАВЬ СВОИ ДАННЫЕ ИЗ SUPABASE СЮДА:
+
+  const SUPABASE_URL = 'https://gphgkqrjdxvepwjmoduy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_PmhuQLPWi0EJyafazMbR3Q_WxiZk3oC';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let currentUser = null;
+  let activeChatUser = null;
+
+  // Проверка сессии при загрузке
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session) initApp(session.user);
+  });
+
+  // Регистрация
+  async function signUp() {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const username = document.getElementById('auth-username').value.trim().toLowerCase();
+
+    if (!username) return alert('Введите никнейм!');
+    if (!email || !password) return alert('Введите email и пароль!');
+
+    // Проверяем, свободен ли никнейм
+    const { data: existing, error: checkError } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', username)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error(checkError);
+      return alert('Ошибка проверки никнейма: ' + checkError.message);
+    }
+    if (existing) return alert('Этот никнейм уже занят!');
+
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      console.error(error);
+      return alert('Ошибка регистрации: ' + error.message);
+    }
+
+    if (!data.user) {
+      return alert('Проверьте почту и подтвердите регистрацию, затем нажмите «Войти».');
+    }
+
+    // Создаем запись в таблице profiles
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert([{ id: data.user.id, username: username, bio: 'Привет! Я тут новенький.' }]);
+
+    if (profileError) {
+      console.error(profileError);
+      return alert('Аккаунт создан, но профиль не записался: ' + profileError.message);
+    }
+
+    if (data.session) {
+      initApp(data.user);
+    } else {
+      alert('Аккаунт создан! Если нужно подтвердить почту — перейдите по ссылке из письма, затем нажмите «Войти».');
+    }
+  }
+
+  // Вход
+  async function signIn() {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    if (!email || !password) return alert('Введите email и пароль!');
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      console.error(error);
+      return alert('Ошибка входа: ' + error.message);
+    }
+    initApp(data.user);
+  }
+
+  // Выход
+  async function signOut() {
+    await supabase.auth.signOut();
+    location.reload();
+  }
+
+  // Запуск приложения после входа
+  async function initApp(user) {
+    currentUser = user;
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app-screen').classList.remove('hidden');
+
+    // Загружаем свой профиль
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+    if (profile) {
+      document.getElementById('my-username').innerText = '@' + profile.username;
+      document.getElementById('my-bio').innerText = profile.bio || '';
+      document.getElementById('bio-input').value = profile.bio || '';
+      if (profile.avatar_url) document.getElementById('my-avatar').src = profile.avatar_url;
+    }
+
+    // Подписываемся на новые сообщения в реальном времени
+    supabase.channel('messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+        const msg = payload.new;
+        if (activeChatUser && (
+          (msg.sender_id === currentUser.id && msg.receiver_id === activeChatUser.id) ||
+          (msg.sender_id === activeChatUser.id && msg.receiver_id === currentUser.id)
+        )) {
+          renderMessage(msg);
+        }
+      }).subscribe();
+  }
+
+  // Обновление фото и описания
+  async function updateProfile() {
+    const bio = document.getElementById('bio-input').value;
+    const file = document.getElementById('avatar-input').files[0];
+    let avatar_url = document.getElementById('my-avatar').src;
+
+    if (file) {
+      const filePath = `${currentUser.id}-${Date.now()}`;
+      const { error: uploadError } = await supabase.storage.from('avatars').upload(filePath, file);
+      if (uploadError) return alert('Ошибка загрузки фото: ' + uploadError.message);
+
+      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+      avatar_url = data.publicUrl;
+    }
+
+    await supabase.from('profiles').update({ bio, avatar_url }).eq('id', currentUser.id);
+    document.getElementById('my-bio').innerText = bio;
+    document.getElementById('my-avatar').src = avatar_url;
+    alert('Профиль обновлен!');
+  }
+
+  // Поиск пользователей по никнейму
+  async function searchUsers() {
+    const query = document.getElementById('search-input').value.trim().toLowerCase();
+    const list = document.getElementById('users-list');
+    list.innerHTML = '';
+    if (!query) return;
+
+    const { data: users } = await supabase
+      .from('profiles')
+      .select('*')
+      .ilike('username', `%${query}%`)
+      .neq('id', currentUser.id)
+      .limit(10);
+
+    users?.forEach(user => {
+      const div = document.createElement('div');
+      div.className = 'user-item';
+      div.innerHTML = `
+        <img class="avatar" src="${user.avatar_url || 'https://via.placeholder.com/52'}" alt="Аватар">
+        <div style="min-width: 0;">
+          <strong>@${user.username}</strong>
+          <div style="font-size: 17px; color: #4a3525; word-wrap: break-word;">${user.bio || ''}</div>
+        </div>
+      `;
+      div.onclick = () => openChat(user);
+      list.appendChild(div);
+    });
+  }
+
+  // Открытие чата с выбранным пользователем
+  async function openChat(user) {
+    activeChatUser = user;
+    document.getElementById('chat-header').innerHTML = `
+      <img class="avatar" style="width:38px; height:38px;" src="${user.avatar_url || 'https://via.placeholder.com/52'}" alt="Аватар">
+      <span>@${user.username} <small style="color:#4a3525; font-weight:normal;">(${user.bio || 'без описания'})</small></span>
+    `;
+    document.getElementById('msg-form').classList.remove('hidden');
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.innerHTML = '';
+
+    // Загружаем историю переписки
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('*')
+      .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${user.id}),and(sender_id.eq.${user.id},receiver_id.eq.${currentUser.id})`)
+      .order('created_at', { ascending: true });
+
+    messages?.forEach(renderMessage);
+  }
+
+  // Отрисовка одного сообщения
+  function renderMessage(msg) {
+    const messagesDiv = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'msg ' + (msg.sender_id === currentUser.id ? 'mine' : 'theirs');
+    div.innerText = msg.content;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+
+  // Отправка сообщения
+  async function sendMessage(e) {
+    e.preventDefault();
+    const input = document.getElementById('msg-input');
+    const content = input.value.trim();
+    if (!content || !activeChatUser) return;
+
+    input.value = '';
+    await supabase.from('messages').insert([{
+      sender_id: currentUser.id,
+      receiver_id: activeChatUser.id,
+      content: content
+    }]);
+  }
+</script>
+
+</body>
+</html>
